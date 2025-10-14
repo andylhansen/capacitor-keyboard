@@ -110,8 +110,12 @@ double stageManagerOffset;
 
 - (void)onKeyboardWillHide:(NSNotification *)notification
 {
-  [self setKeyboardHeight:0 delay:0.01];
-  [self resetScrollView];
+  // Only interfere with frame changes if not in native mode
+  if (self.keyboardResizes != ResizeNative) {
+    [self setKeyboardHeight:0 delay:0.01];
+    [self resetScrollView];
+  }
+  
   hideTimer = [NSTimer scheduledTimerWithTimeInterval:0 repeats:NO block:^(NSTimer * _Nonnull timer) {
     [self.bridge triggerWindowJSEventWithEventName:@"keyboardWillHide"];
     [self notifyListeners:@"keyboardWillHide" data:nil];
@@ -142,9 +146,12 @@ double stageManagerOffset;
     }
   }
 
-  double duration = [[notification.userInfo valueForKey:UIKeyboardAnimationDurationUserInfoKey] doubleValue]+0.2;
-  [self setKeyboardHeight:height delay:duration];
-  [self resetScrollView];
+  // Only interfere with frame changes if not in native mode
+  if (self.keyboardResizes != ResizeNative) {
+    double duration = [[notification.userInfo valueForKey:UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    [self setKeyboardHeight:height delay:duration];
+    [self resetScrollView];
+  }
 
   NSString * data = [NSString stringWithFormat:@"{ 'keyboardHeight': %d }", (int)height];
   [self.bridge triggerWindowJSEventWithEventName:@"keyboardWillShow" data:data];
@@ -157,7 +164,10 @@ double stageManagerOffset;
   CGRect rect = [[notification.userInfo valueForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
   double height = rect.size.height;
 
-  [self resetScrollView];
+  // Only interfere with scroll view if not in native mode
+  if (self.keyboardResizes != ResizeNative) {
+    [self resetScrollView];
+  }
 
   NSString * data = [NSString stringWithFormat:@"{ 'keyboardHeight': %d }", (int)height];
   [self.bridge triggerWindowJSEventWithEventName:@"keyboardDidShow" data:data];
@@ -169,7 +179,11 @@ double stageManagerOffset;
 {
   [self.bridge triggerWindowJSEventWithEventName:@"keyboardDidHide"];
   [self notifyListeners:@"keyboardDidHide" data:nil];
-  [self resetScrollView];
+  
+  // Only interfere with scroll view if not in native mode
+  if (self.keyboardResizes != ResizeNative) {
+    [self resetScrollView];
+  }
 
   stageManagerOffset = 0;
 }
@@ -188,7 +202,9 @@ double stageManagerOffset;
   if (delay == 0) {
     [self _updateFrame];
   } else {
-    [weakSelf performSelector:action withObject:nil afterDelay:delay inModes:@[NSRunLoopCommonModes]];
+    // Use a shorter delay to ensure smooth animation
+    NSTimeInterval adjustedDelay = delay > 0.1 ? delay * 0.8 : delay;
+    [weakSelf performSelector:action withObject:nil afterDelay:adjustedDelay inModes:@[NSRunLoopCommonModes]];
   }
 }
 
@@ -237,13 +253,18 @@ double stageManagerOffset;
     }
     case ResizeNative:
     {
-      [self.webView setFrame:CGRectMake(wf.origin.x, wf.origin.y, f.size.width - wf.origin.x, f.size.height - wf.origin.y - self.paddingBottom)];
+      // Don't interfere with native keyboard behavior - let iOS handle it naturally
+      // This allows the system's smooth keyboard animations to work without plugin interference
       break;
     }
     default:
       break;
   }
-  [self resetScrollView];
+  
+  // Only reset scroll view if not in native mode
+  if (self.keyboardResizes != ResizeNative) {
+    [self resetScrollView];
+  }
 }
 
 
