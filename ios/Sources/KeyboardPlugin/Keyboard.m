@@ -87,7 +87,13 @@ double stageManagerOffset;
     NSLog(@"KeyboardPlugin: resize mode - native");
   }
 
-  self.hideFormAccessoryBar = YES;
+  // Only hide form accessory bar if not in native mode
+  if (self.keyboardResizes != ResizeNative) {
+    self.hideFormAccessoryBar = YES;
+  } else {
+    self.hideFormAccessoryBar = NO;
+    NSLog(@"KeyboardPlugin: Native mode - not hiding form accessory bar");
+  }
   
   NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
   
@@ -199,7 +205,7 @@ double stageManagerOffset;
   // Reset all WebView scroll view properties to natural state
   UIScrollView *scrollView = [self.webView scrollView];
   
-  // Enable scrolling if it was disabled
+  // Always enable scrolling in native mode - ignore disableScroll setting
   scrollView.scrollEnabled = YES;
   
   // Remove our delegate
@@ -210,13 +216,21 @@ double stageManagerOffset;
   scrollView.scrollIndicatorInsets = UIEdgeInsetsZero;
   scrollView.contentOffset = CGPointZero;
   
-  // Reset any content size adjustments
-  scrollView.contentSize = scrollView.bounds.size;
-  
-  // WebView will now handle keyboard naturally since we've removed our interference
+  // Don't set content size - let it be natural
   
   // Reset any frame constraints that might interfere
   self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  
+  // Restore input accessory bar to natural state in native mode
+  // The hideFormAccessoryBar should not affect native keyboard behavior
+  Method UIMethod = class_getInstanceMethod(NSClassFromString(UIClassString), @selector(inputAccessoryView));
+  Method WKMethod = class_getInstanceMethod(NSClassFromString(WKClassString), @selector(inputAccessoryView));
+  if (UIOriginalImp != NULL && UIMethod != NULL) {
+    method_setImplementation(UIMethod, UIOriginalImp);
+  }
+  if (WKOriginalImp != NULL && WKMethod != NULL) {
+    method_setImplementation(WKMethod, WKOriginalImp);
+  }
   
   NSLog(@"KeyboardPlugin: WebView restored to natural state - should now handle keyboard naturally");
 }
