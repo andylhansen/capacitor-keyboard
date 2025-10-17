@@ -41,6 +41,7 @@ typedef enum : NSUInteger {
 @property (nonatomic, readwrite) int paddingBottom;
 
 - (void)resetPluginState;
+- (void)restoreWebViewToNaturalState;
 
 @end
 
@@ -90,15 +91,21 @@ double stageManagerOffset;
   
   NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
   
-  [nc addObserver:self selector:@selector(onKeyboardDidHide:) name:UIKeyboardDidHideNotification object:nil];
-  [nc addObserver:self selector:@selector(onKeyboardDidShow:) name:UIKeyboardDidShowNotification object:nil];
-  [nc addObserver:self selector:@selector(onKeyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
-  [nc addObserver:self selector:@selector(onKeyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
-  
-  [nc removeObserver:self.webView name:UIKeyboardWillHideNotification object:nil];
-  [nc removeObserver:self.webView name:UIKeyboardWillShowNotification object:nil];
-  [nc removeObserver:self.webView name:UIKeyboardWillChangeFrameNotification object:nil];
-  [nc removeObserver:self.webView name:UIKeyboardDidChangeFrameNotification object:nil];
+  // Only register for keyboard notifications if not in native mode
+  // In native mode, let the WebView handle keyboard notifications naturally
+  if (self.keyboardResizes != ResizeNative) {
+    [nc addObserver:self selector:@selector(onKeyboardDidHide:) name:UIKeyboardDidHideNotification object:nil];
+    [nc addObserver:self selector:@selector(onKeyboardDidShow:) name:UIKeyboardDidShowNotification object:nil];
+    [nc addObserver:self selector:@selector(onKeyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+    [nc addObserver:self selector:@selector(onKeyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
+    
+    [nc removeObserver:self.webView name:UIKeyboardWillHideNotification object:nil];
+    [nc removeObserver:self.webView name:UIKeyboardWillShowNotification object:nil];
+    [nc removeObserver:self.webView name:UIKeyboardWillChangeFrameNotification object:nil];
+    [nc removeObserver:self.webView name:UIKeyboardDidChangeFrameNotification object:nil];
+  } else {
+    NSLog(@"KeyboardPlugin: Native mode - not registering keyboard observers, letting WebView handle naturally");
+  }
 }
 
 
@@ -179,6 +186,43 @@ double stageManagerOffset;
         self.keyboardResizes == ResizeNative ? @"native" : 
         self.keyboardResizes == ResizeNone ? @"none" :
         self.keyboardResizes == ResizeBody ? @"body" : @"ionic");
+}
+
+- (void)restoreWebViewToNaturalState
+{
+  if (self.webView == nil) {
+    return;
+  }
+  
+  NSLog(@"KeyboardPlugin: Restoring WebView to completely natural state");
+  
+  // Reset all WebView scroll view properties to natural state
+  UIScrollView *scrollView = [self.webView scrollView];
+  
+  // Enable scrolling if it was disabled
+  scrollView.scrollEnabled = YES;
+  
+  // Remove our delegate
+  scrollView.delegate = nil;
+  
+  // Reset all insets and offsets
+  scrollView.contentInset = UIEdgeInsetsZero;
+  scrollView.scrollIndicatorInsets = UIEdgeInsetsZero;
+  scrollView.contentOffset = CGPointZero;
+  
+  // Reset any content size adjustments
+  scrollView.contentSize = scrollView.bounds.size;
+  
+  // Ensure WebView can handle keyboard naturally
+  // This is crucial for natural keyboard behavior
+  if ([self.webView respondsToSelector:@selector(setKeyboardDisplayRequiresUserAction:)]) {
+    [self.webView setKeyboardDisplayRequiresUserAction:NO];
+  }
+  
+  // Reset any frame constraints that might interfere
+  self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  
+  NSLog(@"KeyboardPlugin: WebView restored to natural state - should now handle keyboard naturally");
 }
 
 - (void)onKeyboardWillHide:(NSNotification *)notification
@@ -452,6 +496,33 @@ static IMP WKOriginalImp;
   if (previousMode != self.keyboardResizes) {
     NSLog(@"KeyboardPlugin: Mode changed, resetting plugin state");
     [self resetPluginState];
+    
+    // Handle keyboard observer registration based on new mode
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    
+    if (self.keyboardResizes == ResizeNative) {
+      // Switching TO native mode - unregister our observers and let WebView handle naturally
+      NSLog(@"KeyboardPlugin: Switching to native mode - unregistering keyboard observers");
+      [nc removeObserver:self name:UIKeyboardDidHideNotification object:nil];
+      [nc removeObserver:self name:UIKeyboardDidShowNotification object:nil];
+      [nc removeObserver:self name:UIKeyboardWillHideNotification object:nil];
+      [nc removeObserver:self name:UIKeyboardWillShowNotification object:nil];
+      
+      // Restore WebView to completely natural state
+      [self restoreWebViewToNaturalState];
+    } else if (previousMode == ResizeNative) {
+      // Switching FROM native mode - register our observers
+      NSLog(@"KeyboardPlugin: Switching from native mode - registering keyboard observers");
+      [nc addObserver:self selector:@selector(onKeyboardDidHide:) name:UIKeyboardDidHideNotification object:nil];
+      [nc addObserver:self selector:@selector(onKeyboardDidShow:) name:UIKeyboardDidShowNotification object:nil];
+      [nc addObserver:self selector:@selector(onKeyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+      [nc addObserver:self selector:@selector(onKeyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
+      
+      [nc removeObserver:self.webView name:UIKeyboardWillHideNotification object:nil];
+      [nc removeObserver:self.webView name:UIKeyboardWillShowNotification object:nil];
+      [nc removeObserver:self.webView name:UIKeyboardWillChangeFrameNotification object:nil];
+      [nc removeObserver:self.webView name:UIKeyboardDidChangeFrameNotification object:nil];
+    }
   } else {
     NSLog(@"KeyboardPlugin: Mode unchanged, no reset needed");
   }
