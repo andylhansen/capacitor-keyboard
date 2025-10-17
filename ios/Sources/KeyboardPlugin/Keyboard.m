@@ -164,10 +164,19 @@ double stageManagerOffset;
     UIScrollView *scrollView = [self.webView scrollView];
     [scrollView setContentInset:UIEdgeInsetsZero];
     [scrollView setScrollIndicatorInsets:UIEdgeInsetsZero];
-    [scrollView setContentOffset:CGPointZero];
+    
+    // Only reset contentOffset if not in native mode
+    // In native mode, preserve the scroll position for natural behavior
+    if (self.keyboardResizes != ResizeNative) {
+      [scrollView setContentOffset:CGPointZero];
+    }
     
     // Reset scroll view delegate based on current disableScroll setting
-    if (self.disableScroll) {
+    // But always enable scrolling in native mode
+    if (self.keyboardResizes == ResizeNative) {
+      scrollView.scrollEnabled = YES;
+      scrollView.delegate = nil;
+    } else if (self.disableScroll) {
       scrollView.scrollEnabled = NO;
       scrollView.delegate = self;
     } else {
@@ -211,10 +220,21 @@ double stageManagerOffset;
   // Remove our delegate
   scrollView.delegate = nil;
   
-  // Reset all insets and offsets
+  // Reset all insets - but DON'T reset contentOffset (let it stay where user scrolled)
   scrollView.contentInset = UIEdgeInsetsZero;
   scrollView.scrollIndicatorInsets = UIEdgeInsetsZero;
-  scrollView.contentOffset = CGPointZero;
+  
+  // Enable automatic content inset adjustment for keyboard (iOS 11+)
+  if (@available(iOS 11.0, *)) {
+    scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+  }
+  
+  // Enable keyboard dismiss mode for natural scrolling behavior
+  scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
+  
+  // Allow scroll view to bounce naturally
+  scrollView.bounces = YES;
+  scrollView.alwaysBounceVertical = YES;
   
   // Don't set content size - let it be natural
   
@@ -225,7 +245,7 @@ double stageManagerOffset;
   // This will restore the original implementations if they were saved
   self.hideFormAccessoryBar = NO;
   
-  NSLog(@"KeyboardPlugin: WebView restored to natural state - should now handle keyboard naturally");
+  NSLog(@"KeyboardPlugin: WebView restored to natural state with automatic keyboard avoidance enabled");
 }
 
 - (void)onKeyboardWillHide:(NSNotification *)notification
