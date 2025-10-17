@@ -213,11 +213,7 @@ double stageManagerOffset;
   // Reset any content size adjustments
   scrollView.contentSize = scrollView.bounds.size;
   
-  // Ensure WebView can handle keyboard naturally
-  // This is crucial for natural keyboard behavior
-  if ([self.webView respondsToSelector:@selector(setKeyboardDisplayRequiresUserAction:)]) {
-    [self.webView setKeyboardDisplayRequiresUserAction:NO];
-  }
+  // WebView will now handle keyboard naturally since we've removed our interference
   
   // Reset any frame constraints that might interfere
   self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
