@@ -221,16 +221,9 @@ double stageManagerOffset;
   // Reset any frame constraints that might interfere
   self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
   
-  // Restore input accessory bar to natural state in native mode
-  // The hideFormAccessoryBar should not affect native keyboard behavior
-  Method UIMethod = class_getInstanceMethod(NSClassFromString(UIClassString), @selector(inputAccessoryView));
-  Method WKMethod = class_getInstanceMethod(NSClassFromString(WKClassString), @selector(inputAccessoryView));
-  if (UIOriginalImp != NULL && UIMethod != NULL) {
-    method_setImplementation(UIMethod, UIOriginalImp);
-  }
-  if (WKOriginalImp != NULL && WKMethod != NULL) {
-    method_setImplementation(WKMethod, WKOriginalImp);
-  }
+  // Disable the input accessory bar modifications in native mode by setting to NO
+  // This will restore the original implementations if they were saved
+  self.hideFormAccessoryBar = NO;
   
   NSLog(@"KeyboardPlugin: WebView restored to natural state - should now handle keyboard naturally");
 }
@@ -410,19 +403,41 @@ static IMP WKOriginalImp;
   if (hideFormAccessoryBar == _hideFormAccessoryBar) {
     return;
   }
+  
+  // Don't modify input accessory view in native mode
+  if (self.keyboardResizes == ResizeNative) {
+    NSLog(@"KeyboardPlugin: In native mode, not modifying input accessory bar");
+    _hideFormAccessoryBar = hideFormAccessoryBar;
+    return;
+  }
+  
   Method UIMethod = class_getInstanceMethod(NSClassFromString(UIClassString), @selector(inputAccessoryView));
   Method WKMethod = class_getInstanceMethod(NSClassFromString(WKClassString), @selector(inputAccessoryView));
   if (hideFormAccessoryBar) {
-    UIOriginalImp = method_getImplementation(UIMethod);
-    WKOriginalImp = method_getImplementation(WKMethod);
+    // Only save original implementations if not already saved
+    if (UIOriginalImp == NULL && UIMethod != NULL) {
+      UIOriginalImp = method_getImplementation(UIMethod);
+    }
+    if (WKOriginalImp == NULL && WKMethod != NULL) {
+      WKOriginalImp = method_getImplementation(WKMethod);
+    }
     IMP newImp = imp_implementationWithBlock(^(id _s) {
       return nil;
     });
-    method_setImplementation(UIMethod, newImp);
-    method_setImplementation(WKMethod, newImp);
+    if (UIMethod != NULL) {
+      method_setImplementation(UIMethod, newImp);
+    }
+    if (WKMethod != NULL) {
+      method_setImplementation(WKMethod, newImp);
+    }
   } else {
-    method_setImplementation(UIMethod, UIOriginalImp);
-    method_setImplementation(WKMethod, WKOriginalImp);
+    // Restore original implementations if they were saved
+    if (UIOriginalImp != NULL && UIMethod != NULL) {
+      method_setImplementation(UIMethod, UIOriginalImp);
+    }
+    if (WKOriginalImp != NULL && WKMethod != NULL) {
+      method_setImplementation(WKMethod, WKOriginalImp);
+    }
   }
   _hideFormAccessoryBar = hideFormAccessoryBar;
 }
