@@ -40,9 +40,6 @@ typedef enum : NSUInteger {
 @property (readwrite, assign, nonatomic) NSString* keyboardStyle;
 @property (nonatomic, readwrite) int paddingBottom;
 
-- (void)resetPluginState;
-- (void)restoreWebViewToNaturalState;
-
 @end
 
 #pragma clang diagnostic push
@@ -56,6 +53,37 @@ NSString* UIClassString;
 NSString* WKClassString;
 NSString* UITraitsClassString;
 double stageManagerOffset;
+
+#pragma mark - NEW: revert helper
+
+- (void)revertWebViewToSystemDefaults {
+  if (!self.webView) { return; }
+  UIScrollView *sv = self.webView.scrollView;
+
+  // Let UIKit manage safe areas and insets again
+  if (@available(iOS 11.0, *)) {
+    sv.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+  }
+  sv.contentInset = sv.adjustedContentInset;
+
+  // Restore scrolling & clear delegate if we had set it
+  sv.scrollEnabled = YES;
+  if (sv.delegate == self) {
+    sv.delegate = nil;
+  }
+
+  // Stop hiding accessory bar, reset keyboard style to default
+  self.hideFormAccessoryBar = NO;
+  [self changeKeyboardStyle:@"DEFAULT"];
+
+  // Clear bookkeeping
+  self.paddingBottom = 0;
+  stageManagerOffset = 0;
+
+  // Ask UIKit to recompute layout
+  [self.webView setNeedsLayout];
+  [self.webView layoutIfNeeded];
+}
 
 - (void)load
 {
@@ -84,34 +112,22 @@ double stageManagerOffset;
   }
 
   if (self.keyboardResizes == ResizeNative) {
-    NSLog(@"KeyboardPlugin: resize mode - native");
+    NSLog(@"KeyboardPlugin: resize mode - native (system defaults)");
   }
 
-  // Only hide form accessory bar if not in native mode
-  if (self.keyboardResizes != ResizeNative) {
-    self.hideFormAccessoryBar = YES;
-  } else {
-    self.hideFormAccessoryBar = NO;
-    NSLog(@"KeyboardPlugin: Native mode - not hiding form accessory bar");
-  }
+  self.hideFormAccessoryBar = YES;
   
   NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
   
-  // Only register for keyboard notifications if not in native mode
-  // In native mode, let the WebView handle keyboard notifications naturally
-  if (self.keyboardResizes != ResizeNative) {
-    [nc addObserver:self selector:@selector(onKeyboardDidHide:) name:UIKeyboardDidHideNotification object:nil];
-    [nc addObserver:self selector:@selector(onKeyboardDidShow:) name:UIKeyboardDidShowNotification object:nil];
-    [nc addObserver:self selector:@selector(onKeyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
-    [nc addObserver:self selector:@selector(onKeyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
-    
-    [nc removeObserver:self.webView name:UIKeyboardWillHideNotification object:nil];
-    [nc removeObserver:self.webView name:UIKeyboardWillShowNotification object:nil];
-    [nc removeObserver:self.webView name:UIKeyboardWillChangeFrameNotification object:nil];
-    [nc removeObserver:self.webView name:UIKeyboardDidChangeFrameNotification object:nil];
-  } else {
-    NSLog(@"KeyboardPlugin: Native mode - not registering keyboard observers, letting WebView handle naturally");
-  }
+  [nc addObserver:self selector:@selector(onKeyboardDidHide:) name:UIKeyboardDidHideNotification object:nil];
+  [nc addObserver:self selector:@selector(onKeyboardDidShow:) name:UIKeyboardDidShowNotification object:nil];
+  [nc addObserver:self selector:@selector(onKeyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+  [nc addObserver:self selector:@selector(onKeyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
+  
+  [nc removeObserver:self.webView name:UIKeyboardWillHideNotification object:nil];
+  [nc removeObserver:self.webView name:UIKeyboardWillShowNotification object:nil];
+  [nc removeObserver:self.webView name:UIKeyboardWillChangeFrameNotification object:nil];
+  [nc removeObserver:self.webView name:UIKeyboardDidChangeFrameNotification object:nil];
 }
 
 
@@ -120,144 +136,29 @@ double stageManagerOffset;
 - (void)resetScrollView
 {
   UIScrollView *scrollView = [self.webView scrollView];
-  [scrollView setContentInset:UIEdgeInsetsZero];
-}
 
-- (void)resetPluginState
-{
-  // Reset all plugin state variables
-  self.paddingBottom = 0;
-  self.keyboardIsVisible = NO;
-  
-  // Cancel and reset hide timer
-  if (hideTimer != nil) {
-    [hideTimer invalidate];
-    hideTimer = nil;
-  }
-  
-  // Reset WebView frame to its natural state
-  if (self.webView != nil) {
-    UIWindow *window = nil;
-    if ([[[UIApplication sharedApplication] delegate] respondsToSelector:@selector(window)]) {
-      window = [[[UIApplication sharedApplication] delegate] window];
+  if (self.keyboardResizes == ResizeNative) {
+    // In native mode, allow UIKit to manage insets
+    if (@available(iOS 11.0, *)) {
+      scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
     }
-    
-    if (!window) {
-      if (@available(iOS 13.0, *)) {
-        NSPredicate *predicate = [NSPredicate predicateWithFormat:@"self isKindOfClass: %@", UIWindowScene.class];
-        UIScene *scene = [UIApplication.sharedApplication.connectedScenes.allObjects filteredArrayUsingPredicate:predicate].firstObject;
-        window = [[(UIWindowScene*)scene windows] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"isKeyWindow == YES"]].firstObject;
-      }
-    }
-    
-    if (window) {
-      CGRect windowBounds = [window bounds];
-      CGRect webViewFrame = self.webView.frame;
-      
-      // Reset WebView to full window size
-      [self.webView setFrame:CGRectMake(webViewFrame.origin.x, webViewFrame.origin.y, 
-                                       windowBounds.size.width - webViewFrame.origin.x, 
-                                       windowBounds.size.height - webViewFrame.origin.y)];
-    }
-    
-    // Reset WebView scroll view state
-    UIScrollView *scrollView = [self.webView scrollView];
-    [scrollView setContentInset:UIEdgeInsetsZero];
-    [scrollView setScrollIndicatorInsets:UIEdgeInsetsZero];
-    
-    // Only reset contentOffset if not in native mode
-    // In native mode, preserve the scroll position for natural behavior
-    if (self.keyboardResizes != ResizeNative) {
-      [scrollView setContentOffset:CGPointZero];
-    }
-    
-    // Reset scroll view delegate based on current disableScroll setting
-    // But always enable scrolling in native mode
-    if (self.keyboardResizes == ResizeNative) {
-      scrollView.scrollEnabled = YES;
-      scrollView.delegate = nil;
-    } else if (self.disableScroll) {
-      scrollView.scrollEnabled = NO;
-      scrollView.delegate = self;
-    } else {
-      scrollView.scrollEnabled = YES;
-      scrollView.delegate = nil;
-    }
-  }
-  
-  // Reset scroll view only if not switching to native mode
-  if (self.keyboardResizes != ResizeNative) {
-    [self resetScrollView];
-  }
-  
-  // Reset stage manager offset for iPad
-  stageManagerOffset = 0;
-  
-  // Cancel any pending keyboard height updates
-  SEL action = @selector(_updateFrame);
-  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:action object:nil];
-  
-  NSLog(@"KeyboardPlugin: Reset plugin state for mode: %@", 
-        self.keyboardResizes == ResizeNative ? @"native" : 
-        self.keyboardResizes == ResizeNone ? @"none" :
-        self.keyboardResizes == ResizeBody ? @"body" : @"ionic");
-}
-
-- (void)restoreWebViewToNaturalState
-{
-  if (self.webView == nil) {
+    scrollView.contentInset = scrollView.adjustedContentInset;
     return;
   }
-  
-  NSLog(@"KeyboardPlugin: Restoring WebView to completely natural state");
-  
-  // Reset all WebView scroll view properties to natural state
-  UIScrollView *scrollView = [self.webView scrollView];
-  
-  // Always enable scrolling in native mode - ignore disableScroll setting
-  scrollView.scrollEnabled = YES;
-  
-  // Remove our delegate
-  scrollView.delegate = nil;
-  
-  // Reset all insets - but DON'T reset contentOffset (let it stay where user scrolled)
-  scrollView.contentInset = UIEdgeInsetsZero;
-  scrollView.scrollIndicatorInsets = UIEdgeInsetsZero;
-  
-  // Enable automatic content inset adjustment for keyboard (iOS 11+)
-  if (@available(iOS 11.0, *)) {
-    scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
-    [scrollView setNeedsLayout];
-    [scrollView layoutIfNeeded];
-  }
-  
-  // Enable keyboard dismiss mode for natural scrolling behavior
-  scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
-  
-  // Allow scroll view to bounce naturally
-  scrollView.bounces = YES;
-  scrollView.alwaysBounceVertical = YES;
-  
-  // Don't set content size - let it be natural
-  
-  // Reset any frame constraints that might interfere
-  self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-  
-  // Disable the input accessory bar modifications in native mode by setting to NO
-  // This will restore the original implementations if they were saved
-  self.hideFormAccessoryBar = NO;
-  
-  NSLog(@"KeyboardPlugin: WebView restored to natural state with automatic keyboard avoidance enabled");
+
+  // Legacy behavior for other modes
+  [scrollView setContentInset:UIEdgeInsetsZero];
 }
 
 - (void)onKeyboardWillHide:(NSNotification *)notification
 {
-  // Only interfere with frame changes if not in native mode
   if (self.keyboardResizes != ResizeNative) {
     [self setKeyboardHeight:0 delay:0.01];
     [self resetScrollView];
+  } else {
+    [self revertWebViewToSystemDefaults];
   }
-  
+
   hideTimer = [NSTimer scheduledTimerWithTimeInterval:0 repeats:NO block:^(NSTimer * _Nonnull timer) {
     [self.bridge triggerWindowJSEventWithEventName:@"keyboardWillHide"];
     [self notifyListeners:@"keyboardWillHide" data:nil];
@@ -270,66 +171,70 @@ double stageManagerOffset;
   if (hideTimer != nil) {
     [hideTimer invalidate];
   }
-  
-  self.keyboardIsVisible = YES;
-  
-  CGRect rect = [[notification.userInfo valueForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
 
-  double height = rect.size.height;
-    
-  if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
-    if (stageManagerOffset > 0) {
-      height = stageManagerOffset;
-    } else {
-      CGRect webViewAbsolute = [self.webView convertRect:self.webView.frame toCoordinateSpace:self.webView.window.screen.coordinateSpace];
-      height = (webViewAbsolute.size.height + webViewAbsolute.origin.y) - (UIScreen.mainScreen.bounds.size.height - rect.size.height);
-      if (height < 0) {
-        height = 0;
-      }
-        
-      stageManagerOffset = height;
-    }
-  }
-
-  // Only interfere with frame changes if not in native mode
   if (self.keyboardResizes != ResizeNative) {
-    double duration = [[notification.userInfo valueForKey:UIKeyboardAnimationDurationUserInfoKey] doubleValue];
-    [self setKeyboardHeight:height delay:duration];
-    [self resetScrollView];
-  }
+    CGRect rect = [[notification.userInfo valueForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
 
-  NSString * data = [NSString stringWithFormat:@"{ 'keyboardHeight': %d }", (int)height];
-  [self.bridge triggerWindowJSEventWithEventName:@"keyboardWillShow" data:data];
-  NSDictionary * kbData = @{@"keyboardHeight": [NSNumber numberWithDouble:height]};
-  [self notifyListeners:@"keyboardWillShow" data:kbData];
+    double height = rect.size.height;
+      
+    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
+      if (stageManagerOffset > 0) {
+        height = stageManagerOffset;
+      } else {
+        CGRect webViewAbsolute = [self.webView convertRect:self.webView.frame toCoordinateSpace:self.webView.window.screen.coordinateSpace];
+        height = (webViewAbsolute.size.height + webViewAbsolute.origin.y) - (UIScreen.mainScreen.bounds.size.height - rect.size.height);
+        if (height < 0) {
+          height = 0;
+        }
+          
+        stageManagerOffset = height;
+      }
+    }
+
+    double duration = [[notification.userInfo valueForKey:UIKeyboardAnimationDurationUserInfoKey] doubleValue]+0.2;
+    [self setKeyboardHeight:(int)height delay:duration];
+    [self resetScrollView];
+
+    NSString * data = [NSString stringWithFormat:@"{ 'keyboardHeight': %d }", (int)height];
+    [self.bridge triggerWindowJSEventWithEventName:@"keyboardWillShow" data:data];
+    NSDictionary * kbData = @{@"keyboardHeight": [NSNumber numberWithDouble:height]};
+    [self notifyListeners:@"keyboardWillShow" data:kbData];
+  } else {
+    // Native: no manual resizing — just notify
+    [self revertWebViewToSystemDefaults];
+    [self.bridge triggerWindowJSEventWithEventName:@"keyboardWillShow"];
+    [self notifyListeners:@"keyboardWillShow" data:nil];
+  }
 }
 
 - (void)onKeyboardDidShow:(NSNotification *)notification
 {
-  CGRect rect = [[notification.userInfo valueForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
-  double height = rect.size.height;
-
-  // Only interfere with scroll view if not in native mode
   if (self.keyboardResizes != ResizeNative) {
-    [self resetScrollView];
-  }
+    CGRect rect = [[notification.userInfo valueForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    double height = rect.size.height;
 
-  NSString * data = [NSString stringWithFormat:@"{ 'keyboardHeight': %d }", (int)height];
-  [self.bridge triggerWindowJSEventWithEventName:@"keyboardDidShow" data:data];
-  NSDictionary * kbData = @{@"keyboardHeight": [NSNumber numberWithDouble:height]};
-  [self notifyListeners:@"keyboardDidShow" data:kbData];
+    [self resetScrollView];
+
+    NSString * data = [NSString stringWithFormat:@"{ 'keyboardHeight': %d }", (int)height];
+    [self.bridge triggerWindowJSEventWithEventName:@"keyboardDidShow" data:data];
+    NSDictionary * kbData = @{@"keyboardHeight": [NSNumber numberWithDouble:height]};
+    [self notifyListeners:@"keyboardDidShow" data:kbData];
+  } else {
+    [self revertWebViewToSystemDefaults];
+    [self.bridge triggerWindowJSEventWithEventName:@"keyboardDidShow"];
+    [self notifyListeners:@"keyboardDidShow" data:nil];
+  }
 }
 
 - (void)onKeyboardDidHide:(NSNotification *)notification
 {
-  self.keyboardIsVisible = NO;
-  
   [self.bridge triggerWindowJSEventWithEventName:@"keyboardDidHide"];
   [self notifyListeners:@"keyboardDidHide" data:nil];
-  
-  // Only interfere with scroll view if not in native mode
+
   if (self.keyboardResizes != ResizeNative) {
     [self resetScrollView];
+  } else {
+    [self revertWebViewToSystemDefaults];
   }
 
   stageManagerOffset = 0;
@@ -349,9 +254,7 @@ double stageManagerOffset;
   if (delay == 0) {
     [self _updateFrame];
   } else {
-    // Use a shorter delay to ensure smooth animation
-    NSTimeInterval adjustedDelay = delay > 0.1 ? delay * 0.8 : delay;
-    [weakSelf performSelector:action withObject:nil afterDelay:adjustedDelay inModes:@[NSRunLoopCommonModes]];
+    [weakSelf performSelector:action withObject:nil afterDelay:delay inModes:@[NSRunLoopCommonModes]];
   }
 }
 
@@ -400,18 +303,14 @@ double stageManagerOffset;
     }
     case ResizeNative:
     {
-      // Don't interfere with native keyboard behavior - let iOS handle it naturally
-      // This allows the system's smooth keyboard animations to work without plugin interference
+      // Native: DO NOT modify the webView frame. Revert to defaults.
+      [self revertWebViewToSystemDefaults];
       break;
     }
     default:
       break;
   }
-  
-  // Only reset scroll view if not in native mode
-  if (self.keyboardResizes != ResizeNative) {
-    [self resetScrollView];
-  }
+  [self resetScrollView];
 }
 
 
@@ -425,41 +324,19 @@ static IMP WKOriginalImp;
   if (hideFormAccessoryBar == _hideFormAccessoryBar) {
     return;
   }
-  
-  // Don't modify input accessory view in native mode
-  if (self.keyboardResizes == ResizeNative) {
-    NSLog(@"KeyboardPlugin: In native mode, not modifying input accessory bar");
-    _hideFormAccessoryBar = hideFormAccessoryBar;
-    return;
-  }
-  
   Method UIMethod = class_getInstanceMethod(NSClassFromString(UIClassString), @selector(inputAccessoryView));
   Method WKMethod = class_getInstanceMethod(NSClassFromString(WKClassString), @selector(inputAccessoryView));
   if (hideFormAccessoryBar) {
-    // Only save original implementations if not already saved
-    if (UIOriginalImp == NULL && UIMethod != NULL) {
-      UIOriginalImp = method_getImplementation(UIMethod);
-    }
-    if (WKOriginalImp == NULL && WKMethod != NULL) {
-      WKOriginalImp = method_getImplementation(WKMethod);
-    }
+    UIOriginalImp = method_getImplementation(UIMethod);
+    WKOriginalImp = method_getImplementation(WKMethod);
     IMP newImp = imp_implementationWithBlock(^(id _s) {
       return nil;
     });
-    if (UIMethod != NULL) {
-      method_setImplementation(UIMethod, newImp);
-    }
-    if (WKMethod != NULL) {
-      method_setImplementation(WKMethod, newImp);
-    }
+    method_setImplementation(UIMethod, newImp);
+    method_setImplementation(WKMethod, newImp);
   } else {
-    // Restore original implementations if they were saved
-    if (UIOriginalImp != NULL && UIMethod != NULL) {
-      method_setImplementation(UIMethod, UIOriginalImp);
-    }
-    if (WKOriginalImp != NULL && WKMethod != NULL) {
-      method_setImplementation(WKMethod, WKOriginalImp);
-    }
+    method_setImplementation(UIMethod, UIOriginalImp);
+    method_setImplementation(WKMethod, WKOriginalImp);
   }
   _hideFormAccessoryBar = hideFormAccessoryBar;
 }
@@ -484,6 +361,10 @@ static IMP WKOriginalImp;
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+  if (self.keyboardResizes == ResizeNative) {
+    // In native mode, do not clamp scroll offset.
+    return;
+  }
   [scrollView setContentOffset: CGPointZero];
 }
 
@@ -521,59 +402,17 @@ static IMP WKOriginalImp;
 - (void)setResizeMode:(CAPPluginCall *)call
 {
   NSString * mode = [call getString:@"mode" defaultValue:@"none"];
-  ResizePolicy previousMode = self.keyboardResizes;
-  
-  NSLog(@"KeyboardPlugin: Changing resize mode from %@ to %@", 
-        previousMode == ResizeNative ? @"native" : 
-        previousMode == ResizeNone ? @"none" :
-        previousMode == ResizeBody ? @"body" : @"ionic",
-        mode);
-  
   if ([mode isEqualToString:@"ionic"]) {
     self.keyboardResizes = ResizeIonic;
   } else if ([mode isEqualToString:@"body"]) {
     self.keyboardResizes = ResizeBody;
   } else if ([mode isEqualToString:@"native"]) {
     self.keyboardResizes = ResizeNative;
+    // Immediately revert so we’re in a clean, system-managed state
+    [self revertWebViewToSystemDefaults];
   } else {
     self.keyboardResizes = ResizeNone;
   }
-  
-  // Reset plugin state when switching modes, especially when switching to/from native
-  if (previousMode != self.keyboardResizes) {
-    NSLog(@"KeyboardPlugin: Mode changed, resetting plugin state");
-    [self resetPluginState];
-    
-    // Handle keyboard observer registration based on new mode
-    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
-    
-    if (self.keyboardResizes == ResizeNative) {
-      // Switching TO native mode - unregister our observers and let WebView handle naturally
-      NSLog(@"KeyboardPlugin: Switching to native mode - unregistering keyboard observers");
-      [nc removeObserver:self name:UIKeyboardDidHideNotification object:nil];
-      [nc removeObserver:self name:UIKeyboardDidShowNotification object:nil];
-      [nc removeObserver:self name:UIKeyboardWillHideNotification object:nil];
-      [nc removeObserver:self name:UIKeyboardWillShowNotification object:nil];
-      
-      // Restore WebView to completely natural state
-      [self restoreWebViewToNaturalState];
-    } else if (previousMode == ResizeNative) {
-      // Switching FROM native mode - register our observers
-      NSLog(@"KeyboardPlugin: Switching from native mode - registering keyboard observers");
-      [nc addObserver:self selector:@selector(onKeyboardDidHide:) name:UIKeyboardDidHideNotification object:nil];
-      [nc addObserver:self selector:@selector(onKeyboardDidShow:) name:UIKeyboardDidShowNotification object:nil];
-      [nc addObserver:self selector:@selector(onKeyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
-      [nc addObserver:self selector:@selector(onKeyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
-      
-      [nc removeObserver:self.webView name:UIKeyboardWillHideNotification object:nil];
-      [nc removeObserver:self.webView name:UIKeyboardWillShowNotification object:nil];
-      [nc removeObserver:self.webView name:UIKeyboardWillChangeFrameNotification object:nil];
-      [nc removeObserver:self.webView name:UIKeyboardDidChangeFrameNotification object:nil];
-    }
-  } else {
-    NSLog(@"KeyboardPlugin: Mode unchanged, no reset needed");
-  }
-  
   [call resolve];
 }
 
@@ -637,4 +476,3 @@ static IMP WKOriginalImp;
 
 @end
 #pragma clang diagnostic pop
-
