@@ -227,6 +227,8 @@ double stageManagerOffset;
   // Enable automatic content inset adjustment for keyboard (iOS 11+)
   if (@available(iOS 11.0, *)) {
     scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    [scrollView setNeedsLayout];
+    [scrollView layoutIfNeeded];
   }
   
   // Enable keyboard dismiss mode for natural scrolling behavior
