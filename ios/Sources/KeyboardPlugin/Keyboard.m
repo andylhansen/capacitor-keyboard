@@ -112,8 +112,15 @@ double stageManagerOffset;
 
 - (void)resetPluginState
 {
-  // Reset padding and frame when switching modes
+  // Reset all plugin state variables
   self.paddingBottom = 0;
+  self.keyboardIsVisible = NO;
+  
+  // Cancel and reset hide timer
+  if (hideTimer != nil) {
+    [hideTimer invalidate];
+    hideTimer = nil;
+  }
   
   // Reset WebView frame to its natural state
   if (self.webView != nil) {
@@ -139,6 +146,21 @@ double stageManagerOffset;
                                        windowBounds.size.width - webViewFrame.origin.x, 
                                        windowBounds.size.height - webViewFrame.origin.y)];
     }
+    
+    // Reset WebView scroll view state
+    UIScrollView *scrollView = [self.webView scrollView];
+    [scrollView setContentInset:UIEdgeInsetsZero];
+    [scrollView setScrollIndicatorInsets:UIEdgeInsetsZero];
+    [scrollView setContentOffset:CGPointZero];
+    
+    // Reset scroll view delegate based on current disableScroll setting
+    if (self.disableScroll) {
+      scrollView.scrollEnabled = NO;
+      scrollView.delegate = self;
+    } else {
+      scrollView.scrollEnabled = YES;
+      scrollView.delegate = nil;
+    }
   }
   
   // Reset scroll view only if not switching to native mode
@@ -152,6 +174,11 @@ double stageManagerOffset;
   // Cancel any pending keyboard height updates
   SEL action = @selector(_updateFrame);
   [NSObject cancelPreviousPerformRequestsWithTarget:self selector:action object:nil];
+  
+  NSLog(@"KeyboardPlugin: Reset plugin state for mode: %@", 
+        self.keyboardResizes == ResizeNative ? @"native" : 
+        self.keyboardResizes == ResizeNone ? @"none" :
+        self.keyboardResizes == ResizeBody ? @"body" : @"ionic");
 }
 
 - (void)onKeyboardWillHide:(NSNotification *)notification
@@ -174,6 +201,9 @@ double stageManagerOffset;
   if (hideTimer != nil) {
     [hideTimer invalidate];
   }
+  
+  self.keyboardIsVisible = YES;
+  
   CGRect rect = [[notification.userInfo valueForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
 
   double height = rect.size.height;
@@ -223,6 +253,8 @@ double stageManagerOffset;
 
 - (void)onKeyboardDidHide:(NSNotification *)notification
 {
+  self.keyboardIsVisible = NO;
+  
   [self.bridge triggerWindowJSEventWithEventName:@"keyboardDidHide"];
   [self notifyListeners:@"keyboardDidHide" data:nil];
   
@@ -400,6 +432,12 @@ static IMP WKOriginalImp;
   NSString * mode = [call getString:@"mode" defaultValue:@"none"];
   ResizePolicy previousMode = self.keyboardResizes;
   
+  NSLog(@"KeyboardPlugin: Changing resize mode from %@ to %@", 
+        previousMode == ResizeNative ? @"native" : 
+        previousMode == ResizeNone ? @"none" :
+        previousMode == ResizeBody ? @"body" : @"ionic",
+        mode);
+  
   if ([mode isEqualToString:@"ionic"]) {
     self.keyboardResizes = ResizeIonic;
   } else if ([mode isEqualToString:@"body"]) {
@@ -412,7 +450,10 @@ static IMP WKOriginalImp;
   
   // Reset plugin state when switching modes, especially when switching to/from native
   if (previousMode != self.keyboardResizes) {
+    NSLog(@"KeyboardPlugin: Mode changed, resetting plugin state");
     [self resetPluginState];
+  } else {
+    NSLog(@"KeyboardPlugin: Mode unchanged, no reset needed");
   }
   
   [call resolve];
