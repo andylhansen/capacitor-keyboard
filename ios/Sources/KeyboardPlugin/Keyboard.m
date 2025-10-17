@@ -40,6 +40,8 @@ typedef enum : NSUInteger {
 @property (readwrite, assign, nonatomic) NSString* keyboardStyle;
 @property (nonatomic, readwrite) int paddingBottom;
 
+- (void)resetPluginState;
+
 @end
 
 #pragma clang diagnostic push
@@ -106,6 +108,50 @@ double stageManagerOffset;
 {
   UIScrollView *scrollView = [self.webView scrollView];
   [scrollView setContentInset:UIEdgeInsetsZero];
+}
+
+- (void)resetPluginState
+{
+  // Reset padding and frame when switching modes
+  self.paddingBottom = 0;
+  
+  // Reset WebView frame to its natural state
+  if (self.webView != nil) {
+    UIWindow *window = nil;
+    if ([[[UIApplication sharedApplication] delegate] respondsToSelector:@selector(window)]) {
+      window = [[[UIApplication sharedApplication] delegate] window];
+    }
+    
+    if (!window) {
+      if (@available(iOS 13.0, *)) {
+        NSPredicate *predicate = [NSPredicate predicateWithFormat:@"self isKindOfClass: %@", UIWindowScene.class];
+        UIScene *scene = [UIApplication.sharedApplication.connectedScenes.allObjects filteredArrayUsingPredicate:predicate].firstObject;
+        window = [[(UIWindowScene*)scene windows] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"isKeyWindow == YES"]].firstObject;
+      }
+    }
+    
+    if (window) {
+      CGRect windowBounds = [window bounds];
+      CGRect webViewFrame = self.webView.frame;
+      
+      // Reset WebView to full window size
+      [self.webView setFrame:CGRectMake(webViewFrame.origin.x, webViewFrame.origin.y, 
+                                       windowBounds.size.width - webViewFrame.origin.x, 
+                                       windowBounds.size.height - webViewFrame.origin.y)];
+    }
+  }
+  
+  // Reset scroll view only if not switching to native mode
+  if (self.keyboardResizes != ResizeNative) {
+    [self resetScrollView];
+  }
+  
+  // Reset stage manager offset for iPad
+  stageManagerOffset = 0;
+  
+  // Cancel any pending keyboard height updates
+  SEL action = @selector(_updateFrame);
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:action object:nil];
 }
 
 - (void)onKeyboardWillHide:(NSNotification *)notification
@@ -352,6 +398,8 @@ static IMP WKOriginalImp;
 - (void)setResizeMode:(CAPPluginCall *)call
 {
   NSString * mode = [call getString:@"mode" defaultValue:@"none"];
+  ResizePolicy previousMode = self.keyboardResizes;
+  
   if ([mode isEqualToString:@"ionic"]) {
     self.keyboardResizes = ResizeIonic;
   } else if ([mode isEqualToString:@"body"]) {
@@ -361,6 +409,12 @@ static IMP WKOriginalImp;
   } else {
     self.keyboardResizes = ResizeNone;
   }
+  
+  // Reset plugin state when switching modes, especially when switching to/from native
+  if (previousMode != self.keyboardResizes) {
+    [self resetPluginState];
+  }
+  
   [call resolve];
 }
 
